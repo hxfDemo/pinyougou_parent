@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans:beans xmlns="http://www.springframework.org/schema/security"
+             xmlns:beans="http://www.springframework.org/schema/beans"
+             xmlns:dubbo="http://code.alibabatech.com/schema/dubbo"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+						        http://code.alibabatech.com/schema/dubbo http://code.alibabatech.com/schema/dubbo/dubbo.xsd
+						http://www.springframework.org/schema/security http://www.springframework.org/schema/security/spring-security.xsd">
+
+    <http pattern="/css/**" security="none"></http>
+    <http pattern="/img/**" security="none"></http>
+    <http pattern="/js/**" security="none"></http>
+    <http pattern="/plugins/**" security="none"></http>
+    <http pattern="/cart.html" security="none"></http>
+    <http pattern="/pay/*.html" security="none"></http>
+
+    <!--
+    通过http://localhost:9003/index.jsp访问当前项目
+        以前：路径被springsecurity拦截，调用认证管理器，判断路径对应的角色和设置的角色是否一致，一致：放行，不一致：跳转到登陆页面登陆
+             用户是否登陆的判断和用户登陆操作
+        现在：路径被拦截之后，会调用casProcessingFilterEntryPoint，会根据loginUrl跳转到cas认证系统，
+            由cas认证系统，判断用户是否登陆，没有登陆：跳转到登陆页面登陆，登陆：接着访问
+            现在的用户是否登陆判断和用户登陆操作，交给了cas来做，springsecurity不管了
+    -->
+    <http use-expressions="false" entry-point-ref="casProcessingFilterEntryPoint">
+        <!--匿名认证-->
+        <intercept-url pattern="cart/*.do" access="IS_AUTHENTICATED_ANONYMOUSLY"></intercept-url>
+
+
+        <!--cas登陆成功，会继续访问项目，会被下面拦截，做角色判断（springsecurity）,票据的判断(cas)-->
+        <intercept-url pattern="/**" access="ROLE_USER"/>   <!--只能做角色判断，不能做票据判断-->
+        <csrf disabled="true"/>
+        <!--
+        custom-filter为自定义过滤器，进行票据判断，但是自定义的过滤器会把springsecurity中默认的拦截器替换，这个时候无法再做角色判断
+            position 表示将过滤器放在指定的位置上替换默认的过滤器，
+            before表示放在默认过滤器指定位置之前  ，
+            after表示放在默认过滤器指定的位置之后
+            -->
+        <custom-filter ref="casAuthenticationFilter"
+                       position="CAS_FILTER"/>  <!--原来是只能做票据判断，不能做角色判断-->    <!-- 自定义的  角色判断+票据判断-->
+
+        <!--
+            requestSingleLogoutFilter ： 本地退出地址和cas退出地址的映射
+            singleLogoutFilter ： cas退出操作
+        -->
+        <custom-filter ref="requestSingleLogoutFilter" before="LOGOUT_FILTER"/>    <!-- 单点退出 -->
+        <custom-filter ref="singleLogoutFilter" before="CAS_FILTER"/>   <!-- 单点退出 -->
+    </http>
+
+
+    <!-- CAS入口点 开始 -->
+    <beans:bean id="casProcessingFilterEntryPoint"
+                class="org.springframework.security.cas.web.CasAuthenticationEntryPoint">
+        <!-- 单点登录服务器登录URL -->
+        <!-- 没有登录跳转的路径-->
+        <beans:property name="loginUrl" value="http://localhost:9100/cas/login"/>
+
+        <!-- 登录成功访问的路径 -->
+        <beans:property name="serviceProperties" ref="serviceProperties"/>
+    </beans:bean>
+
+    <!-- 配置自身的访问地址 -->
+    <beans:bean id="serviceProperties" class="org.springframework.security.cas.ServiceProperties">
+        <!--service 配置自身工程的根地址+/login/cas   -->
+        <beans:property name="service" value="http://localhost:8088/login/cas"/>
+    </beans:bean>
+    <!-- CAS入口点 结束 -->
+
+
+    <!-- 认证过滤器 开始   角色判断+票据判断 -->
+    <beans:bean id="casAuthenticationFilter" class="org.springframework.security.cas.web.CasAuthenticationFilter">
+        <!-- 引入认证管理器 -->
+        <beans:property name="authenticationManager" ref="authenticationManager"/>
+    </beans:bean>
+
+    <!-- 认证管理器 -->
+    <authentication-manager alias="authenticationManager">
+        <!-- 配置认证提供者 -->
+        <authentication-provider ref="casAuthenticationProvider">
+        </authentication-provider>
+    </authentication-manager>
+
+    <!-- 认证提供者 -->
+    <beans:bean id="casAuthenticationProvider"
+                class="org.springframework.security.cas.authentication.CasAuthenticationProvider">
+
+        <!-- 设置认证类,认证是否有对应的角色 -->
+        <beans:property name="authenticationUserDetailsService">
+            <beans:bean class="org.springframework.security.core.userdetails.UserDetailsByNameServiceWrapper">
+                <beans:constructor-arg ref="userDetailsService"/>
+            </beans:bean>
+        </beans:property>
+
+        <!-- 因为使用的是cas单点登录，如果登录成功了，访问的地址是会带有票据 ，所以认证管理器在认证的时候，除了路径对应的角色认证之外，还要对票据进行认证-->
+        <!-- 票据正确访问的路径 -->
+        <beans:property name="serviceProperties" ref="serviceProperties"/>
+
+        <!-- ticketValidator 为票据验证器 -->
+        <beans:property name="ticketValidator">
+            <beans:bean class="org.jasig.cas.client.validation.Cas20ServiceTicketValidator">
+
+                <!--跳转到cas，校验票据是否合法的路径 -->
+                <beans:constructor-arg index="0" value="http://localhost:9100/cas"/>
+            </beans:bean>
+        </beans:property>
+
+        <!-- 仅用于此AuthServices的ID -->
+        <beans:property name="key" value="an_id_for_this_auth_provider_only"/>
+    </beans:bean>
+
+    <!-- 认证类 -->
+    <beans:bean id="userDetailsService" class="com.pinyougou.cart.service.UserDetailsServiceImpl"/>
+
+    <!-- 认证过滤器 结束 -->
+
+
+    <!-- 单点登出  开始  -->
+    <!-- cas单点登出 ，服务端-->
+    <beans:bean id="singleLogoutFilter" class="org.jasig.cas.client.session.SingleSignOutFilter"/>
+    <!-- 本地地址和cas退出地址的映射-->
+    <beans:bean id="requestSingleLogoutFilter"
+                class="org.springframework.security.web.authentication.logout.LogoutFilter">
+
+        <!-- 退出访问的路径，及跳转路径 -->
+        <beans:constructor-arg value="http://localhost:9100/cas/logout?service=http://localhost:8088"/>
+        <beans:constructor-arg>
+            <beans:bean class="org.springframework.security.web.authentication.logout.SecurityContextLogoutHandler"/>
+        </beans:constructor-arg>
+
+        <!-- 用于请求退出的路径 -->
+        <beans:property name="filterProcessesUrl" value="/logout/cas"/>
+    </beans:bean>
+    <!-- 单点登出  结束 -->
+
+</beans:beans>

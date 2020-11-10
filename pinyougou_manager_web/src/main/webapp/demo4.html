@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>angularJS</title>
+    <script src="plugins/angularjs/angular.min.js"></script>
+
+    <script>
+        var app = angular.module('myApp',[]);
+        //控制器
+        app.controller('myController',function ($scope) {
+
+                $scope.list = [
+                    {name:'zhang', shuxue:100, yuwen:20},
+                    {name:'lisi', shuxue:44, yuwen:20},
+                    {name:'wangwu', shuxue:44, yuwen:60}
+                ];
+        });
+    </script>
+</head>
+
+<body ng-app="myApp" ng-controller="myController">
+
+<table>
+    <tr >
+        <td>姓名</td>
+        <td>数学</td>
+        <td>语文</td>
+
+    </tr>
+    <tr ng-repeat="ly in list">
+        <tb>{{ly.name}}</tb>
+        <tb>{{ly.shuxue}}</tb>
+        <tb>{{ly.yuwen}}</tb>
+    </tr>
+</table>
+
+</body>
+</html>
